@@ -1,6 +1,6 @@
 // Guarda la app en el teléfono para que funcione sin internet.
 // Si cambias algún archivo, sube el número de versión para que los teléfonos descarguen la nueva.
-const VERSION = 'fingo-v2';
+const VERSION = 'fingo-v3';
 const FONTS = 'fingo-fonts';
 const APP_FILES = [
   './',
