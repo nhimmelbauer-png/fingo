@@ -143,7 +143,9 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block
 
   const COLORS = ['#ff5d73','#3ec7ff','#7cf29c','#ffcc33','#b78cff','#ff9a3c','#2ee6d6','#ff7ad9','#c6f05a','#7aa2ff'];
   const WAIT_MS = 2200;
-  const MAX_PICK = 9;
+  // Algunos teléfonos (el iPhone, por ejemplo) solo detectan 5 dedos a la vez.
+  const TOUCH_MAX = navigator.maxTouchPoints > 1 ? Math.min(navigator.maxTouchPoints, 10) : 10;
+  const MAX_PICK = Math.max(1, Math.min(9, TOUCH_MAX - 1));
   const R = 46;
 
   let pickCount = 1;
@@ -178,6 +180,8 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block
   let winners = new Set();
   let winnerSnap = [];           // copies so drawing survives lifted fingers
   let chosenAt = 0;
+  let notice = '', noticeUntil = 0;
+  let peak = 0;                  // most fingers seen in this round
 
   function pickColor() {
     const free = COLORS.filter(c => !usedColors.includes(c));
@@ -199,6 +203,7 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block
     if (state === 'chosen') return;
     fingers.set(e.pointerId, { x: e.clientX, y: e.clientY, color: pickColor(), born: performance.now() });
     try { stage.setPointerCapture(e.pointerId); } catch (_) {}
+    peak = Math.max(peak, fingers.size);
     stableSince = performance.now();
     vibrate(10);
   }
@@ -218,12 +223,20 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block
     stableSince = performance.now();
   }
   function reset() {
-    state = 'idle'; winners = new Set(); winnerSnap = []; usedColors = []; fingers.clear();
+    state = 'idle'; peak = 0; winners = new Set(); winnerSnap = []; usedColors = []; fingers.clear();
   }
   stage.addEventListener('pointerdown', onDown);
   stage.addEventListener('pointermove', onMove);
   stage.addEventListener('pointerup', onUp);
-  stage.addEventListener('pointercancel', onUp);
+  stage.addEventListener('pointercancel', (e) => {
+    // Al pasar el límite, el sistema cancela todos los toques de golpe.
+    if (state !== 'chosen' && peak >= TOUCH_MAX - 1 && TOUCH_MAX < 10) {
+      notice = `Este teléfono solo detecta <b>${TOUCH_MAX} dedos</b> a la vez. Jueguen ${TOUCH_MAX} o menos.`;
+      noticeUntil = performance.now() + 4500;
+      vibrate([30, 30, 30]);
+    }
+    onUp(e);
+  });
   stage.addEventListener('contextmenu', e => e.preventDefault());
 
   function setStatus(html) { if (statusEl.innerHTML !== html) statusEl.innerHTML = html; }
@@ -271,12 +284,17 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block
     const needed = pickCount + 1;
 
     if (state !== 'chosen') state = n ? 'waiting' : 'idle';
+    if (state === 'idle') peak = 0;
     intro.classList.toggle('hidden-soft', state !== 'idle');
     picker.classList.toggle('hidden-soft', state !== 'idle');
 
     if (state === 'idle') {
       drawIdle(t);
-      setStatus(pickCount === 1 ? 'Esperando dedos…' : `Se elegirán <b>${pickCount}</b> personas · esperando dedos…`);
+      if (t < noticeUntil) setStatus(notice);
+      else {
+        const lim = TOUCH_MAX < 10 ? ` · máximo ${TOUCH_MAX} dedos` : '';
+        setStatus(pickCount === 1 ? `Esperando dedos…${lim}` : `Se elegirán <b>${pickCount}</b> personas · esperando dedos…${lim}`);
+      }
     } else if (state === 'waiting') {
       let progress = 0;
       if (n >= needed) {
