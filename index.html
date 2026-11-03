@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Fingo</title>
+<meta name="description" content="Todos ponen un dedo en la pantalla y la app elige al azar.">
+<meta name="theme-color" content="#12101a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Fingo">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,800&family=DM+Sans:wght@400;500&display=swap">
+<style>
+/* Layout: one full-bleed touch surface; a winner-count picker docked at the top, a quiet instruction card centered at rest, rings drawn on canvas. Deliberately single dark theme (a game-table look). */
+:root {
+  --bg: #12101a;
+  --bg-2: #1c1828;
+  --fg: #f3effa;
+  --muted: #9a92ad;
+  --accent: #ffcc33;
+  --line: #2e2840;
+  --display: "Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
+  --body: "DM Sans", system-ui, -apple-system, sans-serif;
+  color-scheme: dark;
+}
+html, body { height: 100%; margin: 0; }
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  background: radial-gradient(120% 90% at 50% 40%, var(--bg-2), var(--bg) 70%);
+  background-color: var(--bg);
+  color: var(--fg);
+  font-family: var(--body);
+  overflow: hidden;
+  -webkit-user-select: none; user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+#stage { position: fixed; inset: 0; touch-action: none; }
+canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.hud {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  pointer-events: none;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 24px;
+  text-align: center;
+}
+.intro { display: grid; gap: 14px; max-width: 30ch; transition: opacity .3s ease; }
+.intro h1 {
+  font-family: var(--display); font-weight: 800;
+  font-size: clamp(2.2rem, 9vw, 3.6rem); line-height: .95; margin: 0;
+  letter-spacing: -0.02em; text-wrap: balance;
+}
+.intro h1 em { font-style: normal; color: var(--accent); }
+.brand {
+  font-family: var(--display); font-weight: 800; font-size: 1.1rem;
+  letter-spacing: .32em; text-transform: uppercase; color: var(--muted);
+}
+.brand span { color: var(--accent); }
+.intro p { margin: 0; color: var(--muted); font-size: 1rem; line-height: 1.5; }
+
+.picker {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  top: calc(16px + env(safe-area-inset-top, 0px));
+  display: flex; align-items: center; gap: 12px;
+  background: rgba(28,24,40,.85); border: 1px solid var(--line);
+  border-radius: 999px; padding: 6px 6px 6px 18px;
+  transition: opacity .3s ease;
+  touch-action: manipulation;
+  max-width: calc(100% - 32px);
+}
+.picker label {
+  font-size: .72rem; text-transform: uppercase; letter-spacing: .1em; color: var(--muted);
+  white-space: nowrap;
+}
+.stepper { display: flex; align-items: center; gap: 4px; }
+.stepper button {
+  width: 40px; height: 40px; border-radius: 50%; border: 0;
+  background: var(--line); color: var(--fg);
+  font-family: var(--display); font-size: 1.4rem; font-weight: 500; line-height: 1;
+  cursor: pointer;
+}
+.stepper button:disabled { opacity: .35; cursor: default; }
+.stepper button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.stepper output {
+  min-width: 2ch; text-align: center;
+  font-family: var(--display); font-weight: 800; font-size: 1.6rem; color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.status {
+  position: absolute; left: 0; right: 0;
+  bottom: calc(28px + env(safe-area-inset-bottom, 0px));
+  text-align: center; font-family: var(--display); font-weight: 500;
+  font-size: 1.05rem; color: var(--muted); letter-spacing: .02em;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  pointer-events: none;
+}
+.status b { color: var(--fg); font-weight: 800; }
+.hidden-soft { opacity: 0; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .intro, .picker { transition: none; } }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="c"></canvas>
+  <div class="hud">
+    <div class="intro" id="intro">
+      <div class="brand" aria-label="Fingo">fin<span>go</span></div>
+      <h1>Pon tu <em>dedo</em> en la pantalla</h1>
+      <p id="introText">Todos al mismo tiempo. Mantengan el dedo quieto y en unos segundos la pantalla elige al azar.</p>
+    </div>
+  </div>
+  <div class="picker" id="picker">
+    <label for="count">Elegir</label>
+    <div class="stepper">
+      <button type="button" id="minus" aria-label="Elegir a menos personas">−</button>
+      <output id="count" aria-live="polite">1</output>
+      <button type="button" id="plus" aria-label="Elegir a más personas">+</button>
+    </div>
+  </div>
+  <div class="status" id="status">Esperando dedos…</div>
+</div>
+
+<script>
+(() => {
+  const stage = document.getElementById('stage');
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  const intro = document.getElementById('intro');
+  const introText = document.getElementById('introText');
+  const picker = document.getElementById('picker');
+  const countEl = document.getElementById('count');
+  const minus = document.getElementById('minus');
+  const plus = document.getElementById('plus');
+  const statusEl = document.getElementById('status');
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const COLORS = ['#ff5d73','#3ec7ff','#7cf29c','#ffcc33','#b78cff','#ff9a3c','#2ee6d6','#ff7ad9','#c6f05a','#7aa2ff'];
+  const WAIT_MS = 2200;
+  const MAX_PICK = 9;
+  const R = 46;
+
+  let pickCount = 1;
+  try { const s = parseInt(localStorage.getItem('fingo-pick'), 10); if (s >= 1 && s <= MAX_PICK) pickCount = s; } catch (e) {}
+
+  function renderPicker() {
+    countEl.textContent = pickCount;
+    minus.disabled = pickCount <= 1;
+    plus.disabled = pickCount >= MAX_PICK;
+    introText.textContent = pickCount === 1
+      ? 'Todos al mismo tiempo. Mantengan el dedo quieto y en unos segundos la pantalla elige a una persona al azar.'
+      : `Todos al mismo tiempo. Mantengan el dedo quieto y en unos segundos la pantalla elige a ${pickCount} personas al azar.`;
+    try { localStorage.setItem('fingo-pick', String(pickCount)); } catch (e) {}
+  }
+  minus.addEventListener('click', () => { if (pickCount > 1) { pickCount--; renderPicker(); } });
+  plus.addEventListener('click', () => { if (pickCount < MAX_PICK) { pickCount++; renderPicker(); } });
+  renderPicker();
+
+  let dpr = 1, W = 0, H = 0;
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 3);
+    W = stage.clientWidth; H = stage.clientHeight;
+    canvas.width = W * dpr; canvas.height = H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  addEventListener('resize', resize); resize();
+
+  const fingers = new Map();
+  let usedColors = [];
+  let state = 'idle';            // idle | waiting | chosen
+  let stableSince = 0;
+  let winners = new Set();
+  let winnerSnap = [];           // copies so drawing survives lifted fingers
+  let chosenAt = 0;
+
+  function pickColor() {
+    const free = COLORS.filter(c => !usedColors.includes(c));
+    const pool = free.length ? free : COLORS;
+    const c = pool[Math.floor(Math.random() * pool.length)];
+    usedColors.push(c); return c;
+  }
+  function randInt(n) {
+    if (window.crypto && crypto.getRandomValues) {
+      const a = new Uint32Array(1); crypto.getRandomValues(a); return a[0] % n;
+    }
+    return Math.floor(Math.random() * n);
+  }
+  function vibrate(p) { try { navigator.vibrate && navigator.vibrate(p); } catch (e) {} }
+
+  function onDown(e) {
+    if (e.target.closest('.picker') && fingers.size === 0) return;
+    e.preventDefault();
+    if (state === 'chosen') return;
+    fingers.set(e.pointerId, { x: e.clientX, y: e.clientY, color: pickColor(), born: performance.now() });
+    try { stage.setPointerCapture(e.pointerId); } catch (_) {}
+    stableSince = performance.now();
+    vibrate(10);
+  }
+  function onMove(e) {
+    const f = fingers.get(e.pointerId);
+    if (f) { f.x = e.clientX; f.y = e.clientY; }
+  }
+  function onUp(e) {
+    const f = fingers.get(e.pointerId);
+    if (!f) return;
+    fingers.delete(e.pointerId);
+    if (state === 'chosen') {
+      if (fingers.size === 0) reset();
+      return;
+    }
+    usedColors = usedColors.filter(c => c !== f.color);
+    stableSince = performance.now();
+  }
+  function reset() {
+    state = 'idle'; winners = new Set(); winnerSnap = []; usedColors = []; fingers.clear();
+  }
+  stage.addEventListener('pointerdown', onDown);
+  stage.addEventListener('pointermove', onMove);
+  stage.addEventListener('pointerup', onUp);
+  stage.addEventListener('pointercancel', onUp);
+  stage.addEventListener('contextmenu', e => e.preventDefault());
+
+  function setStatus(html) { if (statusEl.innerHTML !== html) statusEl.innerHTML = html; }
+
+  function drawIdle(t) {
+    const pts = [[.3,.34],[.7,.4],[.5,.72]];
+    pts.forEach(([px,py], i) => {
+      const x = px * W, y = py * H;
+      const pulse = reduce ? 0 : Math.sin(t/700 + i*2) * 4;
+      ctx.beginPath(); ctx.arc(x, y, R + pulse, 0, Math.PI*2);
+      ctx.strokeStyle = 'rgba(243,239,250,0.08)'; ctx.lineWidth = 2; ctx.setLineDash([4,8]); ctx.stroke();
+      ctx.setLineDash([]);
+    });
+  }
+
+  function drawFinger(f, t, opts) {
+    const age = t - f.born;
+    const grow = Math.min(1, age / 220);
+    const breathe = reduce ? 0 : Math.sin(t / 180 + f.born) * 3;
+    const r = (R + breathe) * (0.6 + 0.4 * grow) * (opts.scale || 1);
+    ctx.globalAlpha = opts.alpha ?? 1;
+    const g = ctx.createRadialGradient(f.x, f.y, r * .4, f.x, f.y, r * 2);
+    g.addColorStop(0, f.color + '55'); g.addColorStop(1, f.color + '00');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(f.x, f.y, r * 2, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(f.x, f.y, r, 0, Math.PI*2);
+    ctx.lineWidth = 10; ctx.strokeStyle = f.color; ctx.stroke();
+    ctx.beginPath(); ctx.arc(f.x, f.y, r * .55, 0, Math.PI*2);
+    ctx.fillStyle = f.color; ctx.fill();
+    if (opts.progress != null && opts.progress > 0) {
+      ctx.beginPath();
+      ctx.arc(f.x, f.y, r + 14, -Math.PI/2, -Math.PI/2 + Math.PI*2*opts.progress);
+      ctx.lineWidth = 4; ctx.lineCap = 'round'; ctx.strokeStyle = '#f3effa'; ctx.stroke();
+      ctx.lineCap = 'butt';
+    }
+    if (opts.halo) {
+      ctx.beginPath(); ctx.arc(f.x, f.y, r + 22 + opts.halo * 6, 0, Math.PI*2);
+      ctx.lineWidth = 3; ctx.strokeStyle = '#f3effa'; ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function frame(t) {
+    ctx.clearRect(0, 0, W, H);
+    const n = fingers.size;
+    const needed = pickCount + 1;
+
+    if (state !== 'chosen') state = n ? 'waiting' : 'idle';
+    intro.classList.toggle('hidden-soft', state !== 'idle');
+    picker.classList.toggle('hidden-soft', state !== 'idle');
+
+    if (state === 'idle') {
+      drawIdle(t);
+      setStatus(pickCount === 1 ? 'Esperando dedos…' : `Se elegirán <b>${pickCount}</b> personas · esperando dedos…`);
+    } else if (state === 'waiting') {
+      let progress = 0;
+      if (n >= needed) {
+        progress = Math.min(1, (t - stableSince) / WAIT_MS);
+        const secs = Math.max(1, Math.ceil((WAIT_MS - (t - stableSince)) / 1000));
+        const who = pickCount === 1 ? 'a 1' : `a ${pickCount}`;
+        setStatus(`<b>${n}</b> dedos · eligiendo ${who} en ${secs}…`);
+        if (progress >= 1) choose(t);
+      } else {
+        const falta = needed - n;
+        setStatus(`Faltan <b>${falta}</b> ${falta === 1 ? 'dedo' : 'dedos'} más (para elegir ${pickCount} se necesitan ${needed})`);
+      }
+      fingers.forEach(f => drawFinger(f, t, { progress }));
+    }
+
+    if (state === 'chosen') {
+      const k = Math.min(1, (t - chosenAt) / 700);
+      const ease = 1 - Math.pow(1 - k, 3);
+      // keep live position for winners still touching
+      winnerSnap.forEach(w => { const live = fingers.get(w.id); if (live) { w.x = live.x; w.y = live.y; } });
+
+      if (winnerSnap.length === 1) {
+        const w = winnerSnap[0];
+        const maxR = Math.hypot(Math.max(w.x, W - w.x), Math.max(w.y, H - w.y));
+        const holeR = R * 2.2;
+        const outer = holeR + (maxR - holeR) * ease;
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(w.x, w.y, outer, 0, Math.PI*2);
+        ctx.arc(w.x, w.y, holeR, 0, Math.PI*2, true);
+        ctx.fillStyle = w.color; ctx.globalAlpha = 0.92; ctx.fill('evenodd');
+        ctx.restore();
+      } else {
+        // dim the table, spotlight each winner
+        ctx.save();
+        ctx.fillStyle = `rgba(8,6,12,${0.7 * ease})`;
+        ctx.beginPath(); ctx.rect(0, 0, W, H);
+        winnerSnap.forEach(w => { ctx.moveTo(w.x + R*2.4, w.y); ctx.arc(w.x, w.y, R * 2.4, 0, Math.PI*2, true); });
+        ctx.fill('evenodd');
+        ctx.restore();
+      }
+      fingers.forEach((f, id) => { if (!winners.has(id)) drawFinger(f, t, { alpha: 1 - ease * 0.85 }); });
+      winnerSnap.forEach((w, i) => drawFinger(w, t, {
+        scale: 1.15 + (reduce ? 0 : Math.sin(t/220 + i) * .05),
+        halo: winnerSnap.length > 1 ? ease : 0
+      }));
+      setStatus(winnerSnap.length === 1
+        ? '<b>¡Elegido!</b> Levanten los dedos para jugar otra vez'
+        : `<b>¡${winnerSnap.length} elegidos!</b> Levanten los dedos para jugar otra vez`);
+    }
+    requestAnimationFrame(frame);
+  }
+
+  function choose(t) {
+    const ids = [...fingers.keys()];
+    // Fisher–Yates partial shuffle
+    for (let i = ids.length - 1; i > 0; i--) {
+      const j = randInt(i + 1); [ids[i], ids[j]] = [ids[j], ids[i]];
+    }
+    const picked = ids.slice(0, pickCount);
+    winners = new Set(picked);
+    winnerSnap = picked.map(id => ({ id, ...fingers.get(id) }));
+    state = 'chosen'; chosenAt = t;
+    vibrate([60, 40, 120]);
+  }
+
+  requestAnimationFrame(frame);
+})();
+</script>
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  });
+}
+</script>
+</body>
+</html>
